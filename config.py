@@ -8,8 +8,9 @@ class Config:
     STUDENT_EMAIL = os.getenv('STUDENT_EMAIL')
     STUDENT_SECRET = os.getenv('STUDENT_SECRET')
     
-    # API Keys
-    ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
+    # AIPipe Configuration
+    AIPIPE_TOKEN = os.getenv('AIPIPE_TOKEN')
+    AIPIPE_MODEL = os.getenv('AIPIPE_MODEL', 'openai/gpt-4o-mini')  # or 'openai/gpt-4.1-nano'
     
     # Server config
     PORT = int(os.getenv('PORT', 5000))
@@ -19,6 +20,5 @@ class Config:
     QUIZ_TIMEOUT = 180  # 3 minutes in seconds
     BROWSER_TIMEOUT = 30000  # 30 seconds for page loads
     
-    # Claude model
-    CLAUDE_MODEL = 'claude-sonnet-4-20250514'
+    # Model settings
     MAX_TOKENS = 4096
