@@ -31,10 +31,12 @@ class LLMSolver:
         logger.info("LLMSolver found submit_url: %s", submit_url)
 
         # attempt to extract secret from page or files
-        secret = self._extract_secret_from_html(html) or self._extract_secret_from_files(downloaded_files)
+        secret = None
+        if "scrape" in base_url:
+            secret = self._extract_secret_from_html(html) or self._extract_secret_from_files(downloaded_files)
         if secret:
-            logger.info("Extracted secret: %s", secret)
             return {"submit_url": submit_url, "answer": secret, "reasoning": "secret extracted locally"}
+
 
         # Try to compute answers from downloaded files
         for path in downloaded_files or []:
