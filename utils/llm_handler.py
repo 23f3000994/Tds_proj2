@@ -1,176 +1,141 @@
-import re
+import requests
 import json
 import logging
-from urllib.parse import urljoin
+from typing import Dict, Any, Optional
+from config import Config
 
-logger = logging.getLogger("llm_solver")
+logger = logging.getLogger(__name__)
 
-
-class LLMSolver:
-    def __init__(self, ai_client=None, model_name="gpt-4o-mini"):
+class LLMHandler:
+    def __init__(self):
+        self.config = Config()
+        self.api_key = self.config.AIPIPE_API_KEY
+        self.base_url = self.config.AIPIPE_BASE_URL
+        
+    def call_llm(self, prompt: str, system_prompt: Optional[str] = None, model: str = "gpt-4") -> str:
         """
-        ai_client: optional callable for LLM usage (e.g., OpenAI, AIPipe)
-        model_name: string name of model to use
+        Call LLM via AIPipe API
+        
+        Args:
+            prompt: User prompt
+            system_prompt: System prompt (optional)
+            model: Model to use
+            
+        Returns:
+            LLM response as string
         """
-        self.ai_client = ai_client
-        self.model_name = model_name
-
-    # ------------------------------------------------------
-    # MAIN ENTRY
-    # ------------------------------------------------------
-    def solve_quiz(self, page_content: dict, files: list):
-        """
-        page_content contains:
-            - url
-            - html
-            - text
-        files contains list of (filename, path)
-        """
-
-        page_url = page_content.get("url", "")
-        html = page_content.get("html", "")
-        text = page_content.get("text", "") or ""
-
-        logger.info(f"LLMSolver.solve_quiz: page_url={page_url} files={len(files)}")
-
-        # Try to find submit_url from page HTML
-        submit_url = self._find_submit_url(html, page_url)
-        if submit_url:
-            logger.info(f"LLMSolver found submit_url: {submit_url}")
-        else:
-            logger.warning("No submit_url found in page content; will still try heuristics and LLM.")
-
-        # SECRET QUIZ DETECTION - ENABLE ONLY FOR SCRAPE PAGES
-        if "scrape" in page_url:
-            secret = self._extract_secret(html)
-            if secret:
-                logger.info(f"Extracted secret: {secret}")
-                return {
-                    "submit_url": submit_url,
-                    "answer": secret,
-                    "reasoning": "Secret quiz detected; extracted from page"
-                }
-
-        # AUDIO QUIZ HANDLING
-        if files:
-            logger.info("Audio/Data quiz detected, processing CSV...")
-            answer = self._solve_csv_sum(files)
-            return {
-                "submit_url": submit_url,
-                "answer": answer,
-                "reasoning": "Calculated sum from CSV"
-            }
-
-        # FALLBACK: USE AI CLIENT
-        if self.ai_client:
-            logger.info("Using LLM client...")
-            return self._ask_ai(html, submit_url)
-        else:
-            logger.error("No AI configured and no local solution found")
-            return {"submit_url": submit_url, "answer": None}
-
-    # ------------------------------------------------------
-    # SUBMIT URL EXTRACTION
-    # ------------------------------------------------------
-    def _find_submit_url(self, html: str, page_url: str):
-        if not html:
-            return None
-
-        # JSON pattern: "submit_url": "/submit"
-        m = re.search(r'["\']submit_url["\']\s*:\s*["\']([^"\']+)["\']', html, re.IGNORECASE)
-        if m:
-            return self._normalize_submit_url(m.group(1), page_url)
-
-        # JavaScript var: const SUBMIT_URL = "/submit"
-        m = re.search(r'SUBMIT_URL\s*=\s*["\']([^"\']+)["\']', html)
-        if m:
-            return self._normalize_submit_url(m.group(1), page_url)
-
-        # data attribute
-        m = re.search(r'data-submit-url=["\']([^"\']+)["\']', html, re.IGNORECASE)
-        if m:
-            return self._normalize_submit_url(m.group(1), page_url)
-
-        # Direct "/submit"
-        m = re.search(r'["\'](\/submit[^"\']*)["\']', html)
-        if m:
-            return self._normalize_submit_url(m.group(1), page_url)
-
-        # Form action
-        m = re.search(r'<form[^>]+action=["\']([^"\']+)["\']', html, re.IGNORECASE)
-        if m:
-            return self._normalize_submit_url(m.group(1), page_url)
-
-        return None
-
-    # ------------------------------------------------------
-    def _normalize_submit_url(self, raw_url, page_url):
-        if raw_url.startswith("http"):
-            return raw_url
-        return urljoin(page_url, raw_url)
-
-    # ------------------------------------------------------
-    # SECRET EXTRACTION
-    # ------------------------------------------------------
-    def _extract_secret(self, html: str):
-        if not html:
-            return None
-
-        # look for JS variable or JSON field containing "secret"
-        m = re.search(r'["\']secret["\']\s*:\s*["\']([^"\']+)["\']', html, re.IGNORECASE)
-        if m:
-            return m.group(1)
-
-        m = re.search(r'SECRET\s*=\s*["\']([^"\']+)["\']', html)
-        if m:
-            return m.group(1)
-
-        return None
-
-    # ------------------------------------------------------
-    # CSV / AUDIO QUIZ SOLVER
-    # ------------------------------------------------------
-    def _solve_csv_sum(self, files):
-        import csv
-
-        # Expect exactly one CSV file
-        fname, fpath = files[0]
-
-        with open(fpath, "r") as f:
-            reader = csv.reader(f)
-            nums = []
-            for row in reader:
-                for x in row:
-                    try:
-                        nums.append(float(x))
-                    except:
-                        pass
-
-        return int(sum(nums))
-
-    # ------------------------------------------------------
-    # LLM FALLBACK
-    # ------------------------------------------------------
-    def _ask_ai(self, html, submit_url):
-        logger.info("Asking LLM as fallback...")
-
-        prompt = f"""
-You are solving a quiz. The HTML content is below:
-
-{html}
-
-Your job:
-1. Identify the correct submit_url (if missing, output /submit)
-2. Determine the correct answer.
-
-Return a JSON dictionary with:
-- "submit_url"
-- "answer"
-"""
-
-        resp = self.ai_client(prompt, model=self.model_name)
-
         try:
-            return json.loads(resp)
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            messages = []
+            
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            
+            messages.append({"role": "user", "content": prompt})
+            
+            payload = {
+                "model": model,
+                "messages": messages,
+                "temperature": 0.1,
+                "max_tokens": 2000
+            }
+            
+            response = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=60
+            )
+            
+            response.raise_for_status()
+            result = response.json()
+            
+            return result["choices"][0]["message"]["content"]
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"API request failed: {str(e)}")
+            raise
+        except KeyError as e:
+            logger.error(f"Unexpected response format: {str(e)}")
+            raise
+    
+    def analyze_quiz_page(self, html_content: str, task_description: str = "") -> Dict[str, Any]:
+        """
+        Analyze quiz page HTML and extract instructions
+        
+        Args:
+            html_content: HTML content of the quiz page
+            task_description: Additional task description
+            
+        Returns:
+            Dictionary with analysis results
+        """
+        prompt = f"""
+        Analyze this quiz page HTML and extract the following information:
+        
+        1. What is the quiz question/task?
+        2. What data/files need to be processed?
+        3. What is the expected output format?
+        4. Where should the answer be submitted (URL)?
+        5. What is the submission format (JSON structure)?
+        
+        HTML Content:
+        {html_content[:10000]}  # Limit to first 10k chars
+        
+        Additional context: {task_description}
+        
+        Provide your analysis in JSON format with these keys:
+        - question: The main question/task
+        - data_sources: List of data sources/files mentioned
+        - expected_output: Description of expected output
+        - submit_url: URL for submission
+        - submission_format: JSON structure for submission
+        - steps_needed: List of steps required to solve
+        """
+        
+        response = self.call_llm(prompt, system_prompt="You are a quiz analysis expert.")
+        
+        try:
+            # Extract JSON from response
+            json_start = response.find('{')
+            json_end = response.rfind('}') + 1
+            json_str = response[json_start:json_end]
+            
+            return json.loads(json_str)
         except:
-            return {"submit_url": submit_url, "answer": None}
+            # Fallback if JSON parsing fails
+            return {
+                "question": "Unable to parse",
+                "raw_response": response
+            }
+    
+    def solve_data_task(self, data: Any, task: str) -> Any:
+        """
+        Solve data analysis task using LLM
+        
+        Args:
+            data: Data to analyze (could be text, structured data, etc.)
+            task: Description of what to do with the data
+            
+        Returns:
+            Analysis result
+        """
+        prompt = f"""
+        Task: {task}
+        
+        Data: {str(data)[:5000]}  # Limit data size
+        
+        Instructions:
+        1. Analyze the data carefully
+        2. Perform the requested operation
+        3. Provide only the final answer in the required format
+        4. If calculation is needed, show your work but put final answer at the end
+        
+        Your response should be ONLY the answer in the appropriate format.
+        """
+        
+        return self.call_llm(prompt, system_prompt="You are a data analysis expert.")
