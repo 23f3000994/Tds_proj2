@@ -3,13 +3,11 @@ services:
     name: llm-analysis-quiz
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 4 --timeout 120 app:app
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120 app:app
     envVars:
       - key: PORT
         value: 10000
       - key: PYTHON_VERSION
-        value: 3.11.0
-      - key: HEADLESS
-        value: true
+        value: 3.11.9
     healthCheckPath: /health
     autoDeploy: true
