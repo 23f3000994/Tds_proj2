@@ -1,10 +1,13 @@
-from flask import Flask, request, jsonify
-from config import Config
-from quiz_processor import QuizProcessor
+import json
 import logging
-import threading
+from datetime import datetime, timedelta
+from flask import Flask, request, jsonify
+import requests
+from config import Config
+from utils.quiz_solver import QuizSolver
+from utils.browser import BrowserManager
 
-# Setup logging
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -12,72 +15,100 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+quiz_solver = QuizSolver()
+browser_manager = BrowserManager()
 
-@app.route('/', methods=['GET'])
-def home():
-    return jsonify({
-        "status": "active",
-        "message": "LLM Quiz Solver API",
-        "endpoints": {
-            "/": "GET - This info page",
-            "/quiz": "POST - Submit quiz task"
-        }
-    })
+# Store active quiz sessions
+active_sessions = {}
+
+class APIServer:
+    def __init__(self):
+        self.config = Config()
+        
+    def verify_secret(self, email, secret):
+        """Verify if the secret matches for the given email"""
+        # In production, this would check against a database
+        # For now, using config
+        return secret == self.config.SECRET
+    
+    def process_quiz(self, email, secret, quiz_url):
+        """Process quiz URL and return answer"""
+        try:
+            # Start browser session
+            browser = browser_manager.get_browser()
+            
+            # Solve the quiz
+            result = quiz_solver.solve_quiz(browser, quiz_url, email, secret)
+            
+            return result
+        except Exception as e:
+            logger.error(f"Error processing quiz: {str(e)}")
+            raise
+
+api_server = APIServer()
 
 @app.route('/quiz', methods=['POST'])
 def handle_quiz():
-    """Main endpoint to receive quiz tasks"""
+    """Handle quiz POST requests"""
     try:
-        # Parse JSON payload
+        # Parse JSON data
         data = request.get_json()
-        
         if not data:
             return jsonify({"error": "Invalid JSON"}), 400
         
-        # Verify required fields
+        # Extract required fields
         email = data.get('email')
         secret = data.get('secret')
-        url = data.get('url')
+        quiz_url = data.get('url')
         
-        if not all([email, secret, url]):
-            return jsonify({"error": "Missing required fields: email, secret, url"}), 400
+        # Validate required fields
+        if not all([email, secret, quiz_url]):
+            return jsonify({"error": "Missing required fields"}), 400
         
-        # Verify credentials
-        if email != Config.STUDENT_EMAIL or secret != Config.STUDENT_SECRET:
-            logger.warning(f"Invalid credentials - Email: {email}")
-            return jsonify({"error": "Invalid credentials"}), 403
+        # Verify secret
+        if not api_server.verify_secret(email, secret):
+            return jsonify({"error": "Invalid secret"}), 403
         
-        logger.info(f"Received valid quiz request for URL: {url}")
+        # Process the quiz
+        logger.info(f"Processing quiz for {email}: {quiz_url}")
         
-        # Process quiz in background to avoid timeout
-        def process_async():
-            try:
-                processor = QuizProcessor(email, secret)
-                result = processor.process_quiz_chain(url)
-                logger.info(f"Quiz processing completed: {result}")
-            except Exception as e:
-                logger.error(f"Error in async processing: {e}")
+        # Start processing in background (async would be better in production)
+        # For simplicity, processing synchronously
+        result = api_server.process_quiz(email, secret, quiz_url)
         
-        # Start async processing
-        thread = threading.Thread(target=process_async)
-        thread.start()
+        return jsonify(result), 200
         
-        # Return immediate response
-        return jsonify({
-            "status": "accepted",
-            "message": "Quiz processing started",
-            "url": url
-        }), 200
-        
+    except json.JSONDecodeError:
+        return jsonify({"error": "Invalid JSON format"}), 400
     except Exception as e:
-        logger.error(f"Error handling quiz request: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Unexpected error: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
-    return jsonify({"status": "healthy"}), 200
+    return jsonify({"status": "healthy", "timestamp": datetime.utcnow().isoformat()}), 200
+
+@app.route('/demo', methods=['POST'])
+def demo_endpoint():
+    """Demo endpoint for testing"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
+        
+        # Simple demo response
+        return jsonify({
+            "message": "Demo endpoint working",
+            "received_data": data,
+            "timestamp": datetime.utcnow().isoformat()
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 if __name__ == '__main__':
-    logger.info(f"Starting Flask app on {Config.HOST}:{Config.PORT}")
-    app.run(host=Config.HOST, port=Config.PORT, debug=False)
+    # Start browser on startup
+    browser_manager.start_browser()
+    
+    # Run Flask app
+    app.run(host='0.0.0.0', port=5000, debug=False)
