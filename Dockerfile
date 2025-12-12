@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies required by Playwright
+# Install Playwright dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libnss3 \
     libatk1.0-0 \
@@ -18,6 +18,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxcb1 \
     libxss1 \
     libglib2.0-0 \
+    libglib2.0-bin \
+    libatk1.0-data \
+    libxkbcommon0 \
+    libxfixes3 \
+    libpango-1.0-0 \
+    libcairo2 \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
@@ -31,4 +37,4 @@ RUN playwright install chromium
 
 COPY . .
 
-CMD ["gunicorn", "-w", "2", "-b", "0.0.0.0:8000", "app:app", "--timeout", "300"]
+CMD ["sh", "-c", "gunicorn -w 2 -b 0.0.0.0:$PORT app:app --timeout 300"]
