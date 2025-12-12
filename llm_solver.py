@@ -75,7 +75,7 @@ class LLMSolver:
         # 2) Try local heuristics (fast, deterministic)
         # 2.a Secret extraction (for "scrape" style pages). Only do this when page_url or html indicates a secret-type quiz.
         secret_answer = None
-        if self._looks_like_secret_quiz(page_url, html):
+        if "scrape" in (page_url or ""):
             secret_answer = self._extract_secret_from_html_or_files(html, downloaded_files)
             if secret_answer is not None:
                 logger.info("LLMSolver extracted secret locally: %s", repr(secret_answer))
@@ -112,37 +112,36 @@ class LLMSolver:
     # Helper: find submit url
     # ----------------------
     def _find_submit_url(self, html: str, page_url: str) -> Optional[str]:
-        """
-        Look for common patterns of submit endpoints in the HTML.
-        - data-submit-url="..."
-        - fetch('/submit'...) or "/submit" inside scripts
-        - JSON blocks containing "submit_url"
-        Returns normalized absolute URL if possible.
-        """
-        if not html:
-            return None
-
-        # 1) JSON field: "submit_url": "..."
-        m = re.search(r'["\']submit_url["\']\s*:\s*["\']([^"\']+)["\']', html, re.IGNORECASE)
-        if m:
-            return self._normalize_submit_url(m.group(1), page_url)
-
-        # 2) data attribute
-        m = re.search(r'data-submit-url=["\']([^"\']+)["\']', html, re.IGNORECASE)
-        if m:
-            return self._normalize_submit_url(m.group(1), page_url)
-
-        # 3) simple /submit usage inside JS
-        m = re.search(r'["\'](\/submit(?:[^\s"\'>]*)?)["\']', html)
-        if m:
-            return self._normalize_submit_url(m.group(1), page_url)
-
-        # 4) form action
-        m = re.search(r'<form[^>]+action=["\']([^"\']+)["\']', html, re.IGNORECASE)
-        if m:
-            return self._normalize_submit_url(m.group(1), page_url)
-
+    if not html:
         return None
+
+    # 1) JSON style: "submit_url": "/submit"
+    m = re.search(r'["\']submit_url["\']\s*:\s*["\']([^"\']+)["\']', html, re.IGNORECASE)
+    if m:
+        return self._normalize_submit_url(m.group(1), page_url)
+
+    # 2) JavaScript variable: const SUBMIT_URL = "/submit"
+    m = re.search(r'SUBMIT_URL\s*=\s*["\']([^"\']+)["\']', html)
+    if m:
+        return self._normalize_submit_url(m.group(1), page_url)
+
+    # 3) data attribute
+    m = re.search(r'data-submit-url=["\']([^"\']+)["\']', html, re.IGNORECASE)
+    if m:
+        return self._normalize_submit_url(m.group(1), page_url)
+
+    # 4) "/submit" inside quotes
+    m = re.search(r'["\'](\/submit(?:[^\s"\'>]*)?)["\']', html)
+    if m:
+        return self._normalize_submit_url(m.group(1), page_url)
+
+    # 5) form action
+    m = re.search(r'<form[^>]+action=["\']([^"\']+)["\']', html, re.IGNORECASE)
+    if m:
+        return self._normalize_submit_url(m.group(1), page_url)
+
+    return None
+
 
     def _find_submit_url_from_text(self, text: str, page_url: str) -> Optional[str]:
         if not text:
